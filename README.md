@@ -90,3 +90,79 @@ movielens-1m数据集包含3个文件（总共包含6040个用户和3952个电�
 
 ### MPDA_feedback
 基于反馈式的用户数据增强的端云协同推荐范式
+
+云端维持一个全局的用户特征向量表（初始化为模型嵌入）
+
+端侧算法伪代码如下：
+```txt
+on_device_exp:
+
+for epoch in range(epochs):
+    # 根据云端用户嵌入向量给用户匹配k个相似用户
+    external_users = match(cloud_user_embeddings)
+    # 合并所有外部数据
+    external_data = merge(external_users)
+    
+    # 本地微调
+    if epoch == 0:
+        model = cloud_model  # 云端初始模型
+        train(model, local_train_data)
+        save(model, user_model_path)  # 保存本地微调后的模型
+    else:
+        model = load(user_model_path)
+
+    # 计算初始验证集AUC
+    init_valid_auc = calc_auc(model, local_valid_data)
+
+    # 外部数据微调
+    train(model, external_data)
+
+    # 外部数据微调后计算验证集auc
+    current_valid_auc = calc_auc(model, local_valid_data)
+
+    delta_auc = current_valid_auc - init_valid_auc
+    if (delta_auc > 1e-6):
+        feedback = 1
+        # 保存模型
+        save(model, user_model_path)
+    else:
+        feedback = 0
+
+    # 反馈结果给云端
+    return feedback, external_users
+```
+
+云端伪代码：
+```txt
+on_cloud_exp:
+
+# 初始化全局用户特征向量为模型用户嵌入
+cloud_user_embeddings = model.user_embedding.weight
+
+for epoch in range(epochs):
+    feedbacks = []
+
+    # 收集用户反馈
+    for user in users:
+        # 根据云端用户嵌入向量给用户匹配k个相似用户
+        external_users = match(cloud_user_embeddings)
+
+        feedback, external_users = on_device_exp(user, external_users)
+        feedbacks[user] = {feedback, external_users}
+    
+    # 更新全局用户特征向量
+    for user, (feedback, external_users) in feedbacks:
+        # 拉近嵌入
+        if feedbakc == 1:
+            cloud_user_embeddings[user] += alpha * (cloud_user_embeddings[user] - cloud_user_embeddings[external_users]).mean()
+        # 拉远嵌入
+        else if feedback == 0:
+            cloud_user_embeddings[user] -= beta * (cloud_user_embeddings[user] - cloud_user_embeddings[external_users]).mean()
+
+        # 归一化嵌入
+        cloud_user_embeddings[user] /= norm(cloud_user_embeddings[user])
+
+    # alpha和beta衰减
+    alpha *= decay_rate
+    beta *= decay_rate
+```
